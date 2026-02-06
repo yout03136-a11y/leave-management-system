@@ -1,0 +1,20 @@
+{
+  "name": "نظام إدارة الإجازات الاحترافي",
+  "description": "تطبيق متطور لإدارة الموظفين، الأقسام، وطلبات الإجازات - النسخة الاحترافية لويندوز.",
+  "requestFramePermissions": [
+    "camera",
+    "microphone"
+  ],
+  "desktop": {
+    "platform": "windows",
+    "target": "exe",
+    "minVersion": "10",
+    "icon": "icon.ico",
+    "buildTools": [
+      "electron",
+      "electron-builder"
+    ],
+    "productName": "LeaveManagerPro",
+    "appId": "com.yousef.leave.pro"
+  }
+}

@@ -1,0 +1,67 @@
+
+{
+  "name": "leave-management-system",
+  "version": "2.2.0",
+  "description": "نظام إدارة الإجازات الاحترافي لسطح المكتب - ويندوز",
+  "main": "electron-main.js",
+  "author": "Yousef Mezher",
+  "type": "commonjs",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "start": "cross-env NODE_ENV=development electron .",
+    "postinstall": "electron-rebuild -f -w sqlite3",
+    "dist": "npm run build && electron-builder"
+  },
+  "dependencies": {
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0",
+    "recharts": "^2.10.3",
+    "xlsx": "^0.18.5",
+    "sqlite3": "^5.1.7",
+    "bcryptjs": "^2.4.3"
+  },
+  "devDependencies": {
+    "@types/react": "^18.2.0",
+    "@types/react-dom": "^18.2.0",
+    "@vitejs/plugin-react": "^4.2.0",
+    "electron": "^28.2.0",
+    "electron-builder": "^24.9.1",
+    "electron-rebuild": "^3.2.9",
+    "cross-env": "^7.0.3",
+    "typescript": "^5.3.3",
+    "vite": "^5.0.0"
+  },
+  "build": {
+    "appId": "com.yousef.leavemanagement.v2",
+    "productName": "نظام إدارة الإجازات",
+    "directories": {
+      "output": "dist-exe"
+    },
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": ["x64"]
+        }
+      ],
+      "icon": "icon.ico"
+    },
+    "files": [
+      "dist/**/*",
+      "electron-main.js",
+      "preload.js",
+      "package.json",
+      "node_modules/**/*"
+    ],
+    "asar": true,
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "shortcutName": "نظام الإجازات",
+      "createDesktopShortcut": true,
+      "installerIcon": "icon.ico",
+      "uninstallerIcon": "icon.ico"
+    }
+  }
+}
