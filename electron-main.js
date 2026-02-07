@@ -1,156 +1,80 @@
-
 const { app, BrowserWindow, screen, Menu, ipcMain } = require('electron');
 const path = require('path');
-const sqlite3 = require('sqlite3').verbose();
+const Database = require('better-sqlite3');
 const bcrypt = require('bcryptjs');
 
 const isDev = process.env.NODE_ENV === 'development';
-
 const ALLOWED_TABLES = ['employees', 'departments', 'leaves', 'users', 'logs'];
 
-// مسار قاعدة البيانات في مجلد بيانات المستخدم لضمان الاستمرارية
+// مسار قاعدة البيانات في مجلد بيانات التطبيق لضمان الاستمرارية
 const dbPath = path.join(app.getPath('userData'), 'leave_system_pro_v2.db');
-const db = new sqlite3.Database(dbPath);
+const db = new Database(dbPath);
 
+// تهيئة قاعدة البيانات وجداولها
 function initDatabase() {
-  db.serialize(() => {
-    // جدول الموظفين
-    db.run(`CREATE TABLE IF NOT EXISTS employees (
-      id TEXT PRIMARY KEY, 
-      name TEXT, 
-      departmentId TEXT, 
-      position TEXT, 
-      hireDate TEXT, 
-      leaveBalance REAL
-    )`);
-    
-    // جدول الأقسام
-    db.run(`CREATE TABLE IF NOT EXISTS departments (
-      id TEXT PRIMARY KEY, 
-      name TEXT, 
-      code TEXT, 
-      description TEXT, 
-      managerName TEXT
-    )`);
-    
-    // جدول الإجازات
-    db.run(`CREATE TABLE IF NOT EXISTS leaves (
-      id TEXT PRIMARY KEY, 
-      employeeId TEXT, 
-      employeeName TEXT, 
-      type TEXT, 
-      startDate TEXT, 
-      endDate TEXT, 
-      days REAL, 
-      reason TEXT, 
-      status TEXT, 
-      requestDate TEXT
-    )`);
-    
-    // جدول المستخدمين مع دعم حقل تغيير كلمة المرور
-    db.run(`CREATE TABLE IF NOT EXISTS users (
-      id TEXT PRIMARY KEY, 
-      username TEXT UNIQUE, 
-      fullName TEXT, 
-      password TEXT, 
-      role TEXT, 
-      permissions TEXT, 
+  try {
+    db.prepare(`CREATE TABLE IF NOT EXISTS users (
+      id TEXT PRIMARY KEY,
+      username TEXT UNIQUE,
+      fullName TEXT,
+      password TEXT,
+      role TEXT,
+      permissions TEXT,
       mustChangePassword INTEGER DEFAULT 1,
       active INTEGER DEFAULT 1
-    )`);
+    )`).run();
 
-    // إنشاء حساب المدير الافتراضي إذا لم يكن موجوداً
-    db.get("SELECT COUNT(*) as count FROM users WHERE username = 'admin'", (err, row) => {
-      if (row && row.count === 0) {
-        const salt = bcrypt.genSaltSync(10);
-        const hash = bcrypt.hashSync('admin123', salt);
-        
-        const adminPerms = JSON.stringify({
-          viewDashboard: true, 
-          manageEmployees: true, 
-          manageLeaves: true,
-          approveLeaves: true, 
-          viewReports: true, 
-          exportData: true,
-          manageBackup: true, 
-          manageUsers: true
-        });
-
-        db.run(`INSERT INTO users (id, username, fullName, password, role, permissions, mustChangePassword, active) 
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)`, 
-                ['admin_root', 'admin', 'المدير العام', hash, 'system_admin', adminPerms, 1, 1]);
-      }
-    });
-  });
+    // التأكد من وجود مدير افتراضي
+    const row = db.prepare("SELECT COUNT(*) as count FROM users WHERE username = ?").get('admin');
+    if (row.count === 0) {
+      const hash = bcrypt.hashSync('admin123', 10);
+      const adminPerms = JSON.stringify({
+        viewDashboard: true,
+        manageEmployees: true,
+        manageLeaves: true,
+        approveLeaves: true,
+        viewReports: true,
+        exportData: true,
+        manageBackup: true,
+        manageUsers: true
+      });
+      db.prepare(`INSERT INTO users (id, username, fullName, password, role, permissions, mustChangePassword, active)
+                  VALUES (?, ?, ?, ?, ?, ?, ?, ?)`).run(
+        'admin_root', 'admin', 'المدير العام', hash, 'system_admin', adminPerms, 1, 1
+      );
+    }
+  } catch (err) {
+    console.error("Database init error:", err);
+  }
 }
 
-// معالجات IPC لقاعدة البيانات
-ipcMain.handle('db-get-all', async (event, table) => {
-  if (!ALLOWED_TABLES.includes(table)) throw new Error('Unauthorized access');
-  return new Promise((resolve, reject) => {
-    db.all(`SELECT * FROM ${table}`, [], (err, rows) => {
-      if (err) reject(err); else resolve(rows);
-    });
-  });
-});
-
+// معالج تسجيل الدخول
 ipcMain.handle('auth-login', async (event, { username, password }) => {
-  return new Promise((resolve, reject) => {
-    db.get("SELECT * FROM users WHERE username = ? AND active = 1", [username], (err, user) => {
-      if (err) return reject(err);
-      if (!user) return resolve(null);
-      
-      const isValid = bcrypt.compareSync(password, user.password);
-      if (isValid) {
-        const { password: _, ...safeUser } = user;
-        // إرجاع الصلاحيات ككائن جاهز للـ React
-        safeUser.permissions = JSON.parse(user.permissions);
-        resolve(safeUser);
-      } else {
-        resolve(null);
-      }
-    });
-  });
+  try {
+    const user = db.prepare("SELECT * FROM users WHERE username = ? AND active = 1").get(username);
+    if (!user) return { success: false, error: "USER_NOT_FOUND" };
+
+    const isValid = bcrypt.compareSync(password, user.password);
+    if (!isValid) return { success: false, error: "WRONG_PASSWORD" };
+
+    const { password: _, ...safeUser } = user;
+
+    // حماية من JSON فارغ أو غير صالح
+    safeUser.permissions = {};
+    try {
+      safeUser.permissions = user.permissions ? JSON.parse(user.permissions) : {};
+    } catch {
+      safeUser.permissions = {};
+    }
+
+    return { success: true, user: safeUser };
+  } catch (err) {
+    console.error("Login error:", err);
+    return { success: false, error: "SERVER_ERROR" };
+  }
 });
 
-ipcMain.handle('db-bulk-save', async (event, { table, items }) => {
-  if (!ALLOWED_TABLES.includes(table)) return false;
-  return new Promise((resolve, reject) => {
-    db.serialize(() => {
-      db.run("BEGIN TRANSACTION");
-      db.run(`DELETE FROM ${table}`); // مسح القديم للمزامنة الكاملة
-      
-      if (items && items.length > 0) {
-        const keys = Object.keys(items[0]);
-        const placeholders = keys.map(() => '?').join(',');
-        const stmt = db.prepare(`INSERT INTO ${table} (${keys.join(',')}) VALUES (${placeholders})`);
-        
-        items.forEach(item => {
-          const vals = Object.values(item).map(v => 
-            (typeof v === 'object' && v !== null) ? JSON.stringify(v) : v
-          );
-          stmt.run(vals);
-        });
-        stmt.finalize();
-      }
-
-      db.run("COMMIT", (err) => {
-        if (err) reject(err); else resolve(true);
-      });
-    });
-  });
-});
-
-ipcMain.handle('update-password', async (event, { userId, newPassword }) => {
-  const salt = bcrypt.genSaltSync(10);
-  const hash = bcrypt.hashSync(newPassword, salt);
-  return new Promise((resolve, reject) => {
-    db.run("UPDATE users SET password = ?, mustChangePassword = 0 WHERE id = ?", [hash, userId], function(err) {
-      if (err) reject(err); else resolve(true);
-    });
-  });
-});
-
+// إنشاء نافذة التطبيق
 function createWindow() {
   const { width, height } = screen.getPrimaryDisplay().workAreaSize;
   const mainWindow = new BrowserWindow({
@@ -160,7 +84,7 @@ function createWindow() {
       nodeIntegration: false,
       contextIsolation: true,
       preload: path.join(__dirname, 'preload.js'),
-      devTools: isDev // إخفاء DevTools في نسخة EXE
+      devTools: isDev
     },
     title: "نظام إدارة الإجازات الاحترافي",
     icon: path.join(__dirname, 'icon.ico'),
@@ -169,11 +93,15 @@ function createWindow() {
 
   Menu.setApplicationMenu(null);
 
+  // تحميل ملف index.html مع دعم EXE و التطوير
+  let indexPath;
   if (isDev) {
-    mainWindow.loadURL('http://localhost:5173');
+    indexPath = path.join(__dirname, 'dist', 'index.html'); // التطوير
   } else {
-    mainWindow.loadFile(path.join(__dirname, 'dist', 'index.html'));
+    indexPath = path.join(process.resourcesPath, 'app', 'dist', 'index.html'); // EXE
   }
+
+  mainWindow.loadFile(indexPath);
 
   mainWindow.once('ready-to-show', () => {
     mainWindow.maximize();
@@ -181,6 +109,7 @@ function createWindow() {
   });
 }
 
+// تشغيل التطبيق
 app.whenReady().then(() => {
   initDatabase();
   createWindow();
